@@ -809,7 +809,7 @@ defmodule AshAi do
           |> Enum.filter(&(&1.public? && &1.filterable?))
           |> Map.new(fn field ->
             value =
-              AshJsonApi.OpenApi.raw_filter_type(field, resource)
+              AshAi.OpenApi.raw_filter_type(field, resource)
               |> OpenApiSpex.OpenApi.to_map()
 
             {field.name, value}

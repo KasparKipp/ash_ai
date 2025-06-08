@@ -832,4 +832,230 @@ defmodule AshAi.OpenApi do
       end
     end
   end
+
+  def raw_filter_type(%Ash.Resource.Calculation{} = calculation, resource) do
+    {type, _constraints} = field_type(calculation, resource)
+
+    input =
+      if Enum.empty?(calculation.arguments) do
+        []
+      else
+        inputs =
+          Enum.map(calculation.arguments, fn argument ->
+            {argument.name, resource_write_attribute_type(argument, resource, :create)}
+          end)
+
+        required =
+          Enum.flat_map(calculation.arguments, fn argument ->
+            if argument.allow_nil? do
+              []
+            else
+              [argument.name]
+            end
+          end)
+
+        [
+          {:input,
+           %Schema{
+             type: :object,
+             properties: Map.new(inputs),
+             required: required,
+             additionalProperties: false
+           }}
+        ]
+      end
+
+    array_type? = match?({:array, _}, type)
+
+    fields =
+      Ash.Filter.builtin_operators()
+      |> Enum.concat(Ash.Filter.builtin_functions())
+      |> Enum.concat(Ash.DataLayer.functions(resource))
+      |> Enum.filter(& &1.predicate?())
+      |> restrict_for_lists(type)
+      |> Enum.flat_map(fn operator ->
+        filter_fields(operator, type, array_type?, calculation, resource)
+      end)
+
+    input_required = Enum.any?(calculation.arguments, &(!&1.allow_nil?))
+
+    fields_with_input =
+      Enum.concat(fields, input)
+
+    required =
+      if input_required do
+        [:input]
+      else
+        []
+      end
+
+    if fields == [] do
+      nil
+    else
+      %Schema{
+        type: :object,
+        required: required,
+        properties: Map.new(fields_with_input),
+        additionalProperties: false
+      }
+      |> with_attribute_description(calculation)
+    end
+  end
+
+  def raw_filter_type(attribute_or_aggregate, resource) do
+    {type, _constraints} = field_type(attribute_or_aggregate, resource)
+    array_type? = match?({:array, _}, type)
+
+    fields =
+      Ash.Filter.builtin_operators()
+      |> Enum.concat(Ash.Filter.builtin_functions())
+      |> Enum.concat(Ash.DataLayer.functions(resource))
+      |> Enum.filter(& &1.predicate?())
+      |> restrict_for_lists(type)
+      |> Enum.flat_map(fn operator ->
+        filter_fields(operator, type, array_type?, attribute_or_aggregate, resource)
+      end)
+
+    if fields == [] do
+      nil
+    else
+      %Schema{
+        type: :object,
+        properties: Map.new(fields),
+        additionalProperties: false
+      }
+      |> with_attribute_description(attribute_or_aggregate)
+    end
+  end
+
+  defp restrict_for_lists(operators, {:array, _}) do
+    list_predicates = [Ash.Query.Operator.IsNil, Ash.Query.Operator.Has]
+    Enum.filter(operators, &(&1 in list_predicates))
+  end
+
+  defp restrict_for_lists(operators, _), do: operators
+
+  defp filter_fields(
+         operator,
+         type,
+         array_type?,
+         attribute_or_aggregate,
+         resource
+       ) do
+    expressable_types = get_expressable_types(operator, type, array_type?)
+
+    if Enum.any?(expressable_types, &(&1 == :same)) do
+      [
+        {operator.name(), resource_attribute_type(attribute_or_aggregate, resource)}
+      ]
+    else
+      type =
+        case Enum.at(expressable_types, 0) do
+          [{:array, :any}, :same] ->
+            {:unwrap, type}
+
+          [_, {:array, :same}] ->
+            {:array, type}
+
+          [_, :same] ->
+            type
+
+          [_, :any] ->
+            Ash.Type.String
+
+          [_, type] when is_atom(type) ->
+            Ash.Type.get_type(type)
+
+          _ ->
+            nil
+        end
+
+      if type do
+        {type, attribute_or_aggregate} =
+          case type do
+            {:unwrap, type} ->
+              {:array, type} = type
+              {type, %{attribute_or_aggregate | type: type, constraints: []}}
+
+            type ->
+              {type, %{attribute_or_aggregate | type: type, constraints: []}}
+          end
+
+        if AshJsonApi.JsonSchema.embedded?(type) do
+          []
+        else
+          attribute_or_aggregate = constraints_to_item_constraints(type, attribute_or_aggregate)
+
+          [
+            {operator.name(), resource_attribute_type(attribute_or_aggregate, resource)}
+          ]
+        end
+      else
+        []
+      end
+    end
+  end
+
+  defp get_expressable_types(operator_or_function, field_type, array_type?) do
+    if :attributes
+       |> operator_or_function.__info__()
+       |> Keyword.get_values(:behaviour)
+       |> List.flatten()
+       |> Enum.any?(&(&1 == Ash.Query.Operator)) do
+      do_get_expressable_types(operator_or_function.types(), field_type, array_type?)
+    else
+      do_get_expressable_types(operator_or_function.args(), field_type, array_type?)
+    end
+  end
+
+  defp do_get_expressable_types(operator_types, field_type, array_type?) do
+    field_type_short_name =
+      case Ash.Type.short_names()
+           |> Enum.find(fn {_, type} -> type == field_type end) do
+        nil -> nil
+        {short_name, _} -> short_name
+      end
+
+    operator_types
+    |> Enum.filter(fn
+      [:any, {:array, type}] when is_atom(type) ->
+        true
+
+      [{:array, inner_type}, :same] when is_atom(inner_type) and array_type? ->
+        true
+
+      :same ->
+        true
+
+      :any ->
+        true
+
+      [:any, type] when is_atom(type) ->
+        true
+
+      [^field_type_short_name, type] when is_atom(type) and not is_nil(field_type_short_name) ->
+        true
+
+      _ ->
+        false
+    end)
+  end
+
+  defp constraints_to_item_constraints(
+         {:array, _},
+         %Ash.Resource.Attribute{
+           constraints: constraints,
+           allow_nil?: allow_nil?
+         } = attribute
+       ) do
+    %{
+      attribute
+      | constraints: [
+          items: constraints,
+          nil_items?: allow_nil? || AshJsonApi.JsonSchema.embedded?(attribute.type)
+        ]
+    }
+  end
+
+  defp constraints_to_item_constraints(_, attribute_or_aggregate), do: attribute_or_aggregate
 end
