@@ -1,0 +1,835 @@
+defmodule AshAi.OpenApi do
+  alias OpenApiSpex.Schema
+
+  @typep content_type_format() :: :json | :multipart
+
+  @spec resource_write_attribute_type(
+          term(),
+          resource :: Ash.Resource.t(),
+          action_type :: atom,
+          format :: content_type_format()
+        ) :: Schema.t()
+  @doc false
+  def resource_write_attribute_type(attribute, resource, action_type, format \\ :json)
+
+  def resource_write_attribute_type(
+        %Ash.Resource.Aggregate{type: nil} = agg,
+        resource,
+        action_type,
+        format
+      ) do
+    {type, constraints} = field_type(agg, resource)
+
+    resource_write_attribute_type(
+      Map.merge(agg, %{type: type, constraints: constraints}),
+      resource,
+      action_type,
+      format
+    )
+  end
+
+  def resource_write_attribute_type(
+        %{type: {:array, type}} = attr,
+        resource,
+        action_type,
+        format
+      ) do
+    %Schema{
+      type: :array,
+      items:
+        resource_write_attribute_type(
+          %{
+            attr
+            | type: type,
+              constraints: attr.constraints[:items] || []
+          },
+          resource,
+          action_type,
+          format
+        )
+    }
+    |> with_attribute_description(attr)
+  end
+
+  def resource_write_attribute_type(
+        %{type: Ash.Type.Map, constraints: constraints} = attr,
+        resource,
+        action_type,
+        format
+      ) do
+    if constraints[:fields] && constraints[:fields] != [] do
+      %Schema{
+        type: :object,
+        additionalProperties: false,
+        properties:
+          Map.new(constraints[:fields], fn {key, config} ->
+            {key,
+             resource_write_attribute_type(
+               %{
+                 attr
+                 | type: config[:type],
+                   constraints: config[:constraints] || []
+               }
+               |> Map.put(:description, config[:description] || nil),
+               resource,
+               action_type,
+               format
+             )}
+          end),
+        required:
+          constraints[:fields]
+          |> Enum.filter(fn {_, config} -> !config[:allow_nil?] end)
+          |> Enum.map(&elem(&1, 0))
+      }
+      |> add_null_for_non_required()
+    else
+      %Schema{type: :object}
+    end
+    |> with_attribute_description(attr)
+  end
+
+  def resource_write_attribute_type(
+        %{type: Ash.Type.Union, constraints: constraints} = attr,
+        resource,
+        action_type,
+        format
+      ) do
+    subtypes =
+      Enum.map(constraints[:types], fn {_name, config} ->
+        fake_attr =
+          %{
+            attr
+            | type: Ash.Type.get_type(config[:type]),
+              constraints: config[:constraints]
+          }
+          |> Map.put(:description, config[:description] || nil)
+
+        resource_write_attribute_type(fake_attr, resource, action_type, format)
+      end)
+
+    %{
+      "anyOf" => subtypes
+    }
+    |> unwrap_any_of()
+    |> with_attribute_description(attr)
+  end
+
+  def resource_write_attribute_type(
+        %{type: Ash.Type.Struct, constraints: constraints} = attr,
+        resource,
+        action_type,
+        format
+      ) do
+    if instance_of = constraints[:instance_of] do
+      if AshJsonApi.JsonSchema.embedded?(instance_of) && !constraints[:fields] do
+        embedded_type_input(attr, action_type, format)
+      else
+        resource_write_attribute_type(
+          %{attr | type: Ash.Type.Map},
+          resource,
+          action_type,
+          format
+        )
+      end
+    else
+      %Schema{}
+    end
+    |> with_attribute_description(attr)
+  end
+
+  def resource_write_attribute_type(%{type: type} = attr, resource, action_type, format) do
+    cond do
+      AshJsonApi.JsonSchema.embedded?(type) ->
+        embedded_type_input(attr, action_type)
+
+      :erlang.function_exported(type, :json_write_schema, 1) ->
+        type.json_write_schema(attr.constraints)
+
+      Ash.Type.NewType.new_type?(type) ->
+        new_constraints = Ash.Type.NewType.constraints(type, attr.constraints)
+        new_type = Ash.Type.NewType.subtype_of(type)
+
+        resource_write_attribute_type(
+          Map.merge(attr, %{type: Ash.Type.get_type(new_type), constraints: new_constraints}),
+          resource,
+          action_type,
+          format
+        )
+
+      true ->
+        resource_attribute_type(attr, resource, format)
+    end
+    |> with_attribute_description(attr)
+  end
+
+  @spec add_null_for_non_required(Schema.t()) :: Schema.t()
+  defp add_null_for_non_required(%Schema{required: required} = schema)
+       when is_list(required) do
+    Map.update!(schema, :properties, fn
+      properties when is_map(properties) ->
+        Enum.reduce(properties, %{}, fn {key, value}, acc ->
+          if Enum.member?(required, key) do
+            Map.put(acc, key, value)
+          else
+            description = value |> Map.get(:description)
+            value = value |> Map.put(:description, nil)
+
+            new_value =
+              %{
+                "anyOf" => [
+                  %{
+                    "type" => "null"
+                  },
+                  value
+                ]
+              }
+              |> then(fn new_value ->
+                case description do
+                  nil -> new_value
+                  description -> Map.put(new_value, "description", description)
+                end
+              end)
+              |> unwrap_any_of()
+
+            Map.put(
+              acc,
+              key,
+              new_value
+            )
+          end
+        end)
+
+      properties ->
+        properties
+    end)
+  end
+
+  @spec with_attribute_description(
+          Schema.t() | map(),
+          Ash.Resource.Attribute.t() | Ash.Resource.Actions.Argument.t() | any
+        ) :: Schema.t() | map()
+  defp with_attribute_description(schema, %{description: nil}) do
+    schema
+  end
+
+  defp with_attribute_description(schema, %{description: description}) do
+    Map.merge(schema, %{description: description})
+  end
+
+  defp with_attribute_description(schema, %{"description" => description}) do
+    Map.merge(schema, %{"description" => description})
+  end
+
+  defp with_attribute_description(schema, _) do
+    schema
+  end
+
+  defp field_type(%Ash.Resource.Attribute{type: type, constraints: constraints}, _resource),
+    do: {type, constraints}
+
+  defp field_type(%Ash.Resource.Calculation{type: type, constraints: constraints}, _resource),
+    do: {type, constraints}
+
+  defp field_type(%Ash.Resource.Aggregate{type: type, constraints: constraints}, _resource)
+       when not is_nil(type),
+       do: {type, constraints}
+
+  defp field_type(
+         %Ash.Resource.Aggregate{
+           kind: kind,
+           field: field,
+           relationship_path: relationship_path
+         },
+         resource
+       ) do
+    field_type =
+      with field when not is_nil(field) <- field,
+           related when not is_nil(related) <-
+             Ash.Resource.Info.related(resource, relationship_path),
+           attr when not is_nil(attr) <- Ash.Resource.Info.field(related, field) do
+        attr.type
+      end
+
+    {:ok, aggregate_type, constraints} =
+      Ash.Query.Aggregate.kind_to_type(kind, field_type, [])
+
+    {aggregate_type, constraints}
+  end
+
+  defp unwrap_any_of(%{"anyOf" => options} = schema) do
+    {options_remaining, options_to_add} =
+      Enum.reduce(options, {[], []}, fn schema, {options, to_add} ->
+        case schema do
+          %{"anyOf" => _} = schema ->
+            case unwrap_any_of(schema) do
+              %{"anyOf" => nested_options} ->
+                {options, nested_options ++ to_add}
+
+              schema ->
+                {options, [schema | to_add]}
+            end
+
+          _ ->
+            {[schema | to_add], options}
+        end
+      end)
+
+    case Enum.uniq(options_remaining ++ options_to_add) do
+      [] ->
+        %{"type" => "any"}
+
+      [one] ->
+        one
+
+      many ->
+        %{"anyOf" => many}
+    end
+    |> then(fn result ->
+      case schema["description"] || schema[:description] do
+        nil -> result
+        description -> Map.put(result, "description", description)
+      end
+    end)
+  end
+
+  defp embedded_type_input(%{type: resource} = attribute, action_type, format \\ :json) do
+    attribute = %{
+      attribute
+      | constraints: Ash.Type.NewType.constraints(resource, attribute.constraints)
+    }
+
+    resource =
+      case attribute.constraints[:instance_of] do
+        nil -> Ash.Type.NewType.subtype_of(resource)
+        type -> type
+      end
+
+    create_action =
+      case attribute.constraints[:create_action] do
+        nil ->
+          Ash.Resource.Info.primary_action(resource, :create)
+
+        name ->
+          Ash.Resource.Info.action(resource, name)
+      end
+
+    update_action =
+      case attribute.constraints[:update_action] do
+        nil ->
+          Ash.Resource.Info.primary_action(resource, :update)
+
+        name ->
+          Ash.Resource.Info.action(resource, name)
+      end
+
+    create_write_attributes =
+      if create_action do
+        write_attributes(resource, create_action.arguments, create_action, nil, format)
+      else
+        %{}
+      end
+
+    update_write_attributes =
+      if update_action do
+        write_attributes(resource, update_action.arguments, update_action, nil, format)
+      else
+        %{}
+      end
+
+    create_required_attributes =
+      if create_action do
+        required_write_attributes(resource, create_action.arguments, create_action)
+      else
+        []
+      end
+
+    update_required_attributes =
+      if update_action do
+        required_write_attributes(resource, update_action.arguments, update_action)
+      else
+        []
+      end
+
+    required =
+      if action_type == :create do
+        create_required_attributes
+      else
+        create_required_attributes
+        |> MapSet.new()
+        |> MapSet.intersection(MapSet.new(update_required_attributes))
+        |> Enum.to_list()
+      end
+
+    %Schema{
+      type: :object,
+      additionalProperties: false,
+      properties:
+        Map.merge(create_write_attributes, update_write_attributes, fn _k, l, r ->
+          %{
+            "anyOf" => [
+              l,
+              r
+            ]
+          }
+          |> unwrap_any_of()
+        end),
+      required: required
+    }
+    |> add_null_for_non_required()
+  end
+
+  @doc false
+  defp required_write_attributes(resource, arguments, action, route \\ nil) do
+    arguments =
+      arguments
+      |> Enum.filter(& &1.public?)
+
+    attributes =
+      case action.type do
+        type when type in [:action, :read] ->
+          []
+
+        :update ->
+          action.require_attributes
+
+        _ ->
+          resource
+          |> Ash.Resource.Info.attributes()
+          |> Enum.filter(&(&1.name in action.accept && &1.writable?))
+          |> Enum.reject(
+            &(&1.name in arguments || &1.allow_nil? || not is_nil(&1.default) || &1.generated? ||
+                &1.name in Map.get(action, :allow_nil_input, []))
+          )
+          |> Enum.map(& &1.name)
+      end
+
+    arguments =
+      arguments
+      |> Enum.reject(& &1.allow_nil?)
+      |> Enum.map(& &1.name)
+
+    Enum.uniq(attributes ++ arguments ++ Map.get(action, :require_attributes, []))
+  end
+
+  @spec write_attributes(
+          resource :: module,
+          [Ash.Resource.Actions.Argument.t()],
+          action :: term(),
+          route :: term(),
+          format :: content_type_format()
+        ) :: %{atom => Schema.t()}
+  defp write_attributes(resource, arguments, action, _route, format) do
+    attributes =
+      if action.type in [:action, :read] do
+        %{}
+      else
+        resource
+        |> Ash.Resource.Info.attributes()
+        |> Enum.filter(&(&1.name in action.accept && &1.writable?))
+        |> Map.new(fn attribute ->
+          {attribute.name,
+           resource_write_attribute_type(attribute, resource, action.type, format)}
+        end)
+      end
+
+    arguments
+    |> Enum.filter(& &1.public?)
+    |> Enum.reduce(attributes, fn argument, attributes ->
+      Map.put(
+        attributes,
+        argument.name,
+        resource_write_attribute_type(argument, resource, :create, format)
+      )
+    end)
+  end
+
+  @spec resource_attribute_type(
+          term(),
+          resource :: Ash.Resource.t(),
+          format :: content_type_format()
+        ) :: Schema.t() | map()
+  defp resource_attribute_type(type, resource, format \\ :json)
+
+  defp resource_attribute_type(%Ash.Resource.Aggregate{type: nil} = agg, resource, format) do
+    {type, constraints} = field_type(agg, resource)
+
+    resource_attribute_type(
+      Map.merge(agg, %{type: type, constraints: constraints}),
+      resource,
+      format
+    )
+  end
+
+  defp resource_attribute_type(%{type: Ash.Type.String}, _resource, _format) do
+    %Schema{type: :string}
+  end
+
+  defp resource_attribute_type(%{type: Ash.Type.CiString}, _resource, _format) do
+    %Schema{type: :string}
+  end
+
+  defp resource_attribute_type(%{type: Ash.Type.Boolean}, _resource, _format) do
+    %Schema{type: :boolean}
+  end
+
+  defp resource_attribute_type(%{type: Ash.Type.Decimal}, _resource, _format) do
+    %Schema{type: :string}
+  end
+
+  defp resource_attribute_type(%{type: Ash.Type.Integer}, _resource, _format) do
+    %Schema{type: :integer}
+  end
+
+  defp resource_attribute_type(
+         %{type: Ash.Type.Map, constraints: constraints} = attr,
+         resource,
+         format
+       ) do
+    if constraints[:fields] && constraints[:fields] != [] do
+      %Schema{
+        type: :object,
+        properties:
+          Map.new(constraints[:fields], fn {key, config} ->
+            {key,
+             resource_attribute_type(
+               %{
+                 attr
+                 | type: Ash.Type.get_type(config[:type]),
+                   constraints: config[:constraints] || []
+               }
+               |> Map.put(:description, config[:description] || nil),
+               resource,
+               format
+             )}
+          end),
+        additionalProperties: false,
+        required:
+          constraints[:fields]
+          |> Enum.filter(fn {_, config} -> !config[:allow_nil?] end)
+          |> Enum.map(&elem(&1, 0))
+      }
+      |> add_null_for_non_required()
+    else
+      %Schema{type: :object}
+    end
+  end
+
+  defp resource_attribute_type(%{type: Ash.Type.Float}, _resource, _format) do
+    %Schema{type: :number, format: :float}
+  end
+
+  defp resource_attribute_type(%{type: Ash.Type.Date}, _resource, _format) do
+    %Schema{
+      type: :string,
+      format: "date"
+    }
+  end
+
+  defp resource_attribute_type(%{type: Ash.Type.UtcDatetime}, _resource, _format) do
+    %Schema{
+      type: :string,
+      format: "date-time"
+    }
+  end
+
+  defp resource_attribute_type(%{type: Ash.Type.NaiveDatetime}, _resource, _format) do
+    %Schema{
+      type: :string,
+      format: "date-time"
+    }
+  end
+
+  defp resource_attribute_type(%{type: Ash.Type.Time}, _resource, _format) do
+    %Schema{
+      type: :string,
+      format: "time"
+    }
+  end
+
+  defp resource_attribute_type(%{type: Ash.Type.UUID}, _resource, _format) do
+    %Schema{
+      type: :string,
+      format: "uuid"
+    }
+  end
+
+  defp resource_attribute_type(%{type: Ash.Type.UUIDv7}, _resource, _format) do
+    %Schema{
+      type: :string,
+      format: "uuid"
+    }
+  end
+
+  defp resource_attribute_type(
+         %{type: Ash.Type.Atom, constraints: constraints},
+         _resource,
+         _format
+       ) do
+    if one_of = constraints[:one_of] do
+      %Schema{
+        type: :string,
+        enum: Enum.map(one_of, &to_string/1)
+      }
+    else
+      %Schema{
+        type: :string
+      }
+    end
+  end
+
+  defp resource_attribute_type(%{type: Ash.Type.DurationName}, _resource, _format) do
+    %Schema{
+      type: :string,
+      enum: Enum.map(Ash.Type.DurationName.values(), &to_string/1)
+    }
+  end
+
+  defp resource_attribute_type(%{type: Ash.Type.File}, _resource, :json),
+    do: %Schema{type: :string, format: :byte, description: "Base64 encoded file content"}
+
+  defp resource_attribute_type(%{type: Ash.Type.File}, _resource, :multipart),
+    do: %Schema{type: :string, description: "Name of multipart upload file"}
+
+  defp resource_attribute_type(
+         %{type: Ash.Type.Union, constraints: constraints} = attr,
+         resource,
+         format
+       ) do
+    subtypes =
+      Enum.map(constraints[:types], fn {_name, config} ->
+        fake_attr =
+          %{
+            attr
+            | type: Ash.Type.get_type(config[:type]),
+              constraints: config[:constraints]
+          }
+          |> Map.put(:description, config[:description] || nil)
+
+        resource_attribute_type(fake_attr, resource, format)
+      end)
+
+    %{
+      "anyOf" => subtypes
+    }
+    |> unwrap_any_of()
+    |> with_attribute_description(attr)
+  end
+
+  defp resource_attribute_type(%{type: {:array, type}} = attr, resource, format) do
+    %Schema{
+      type: :array,
+      items:
+        resource_attribute_type(
+          %{
+            attr
+            | type: type,
+              constraints: attr.constraints[:items] || []
+          },
+          resource,
+          format
+        )
+    }
+  end
+
+  defp resource_attribute_type(
+         %{type: Ash.Type.Struct, constraints: constraints} = attr,
+         resource,
+         format
+       ) do
+    if instance_of = constraints[:instance_of] do
+      if AshJsonApi.JsonSchema.embedded?(instance_of) && !constraints[:fields] do
+        %Schema{
+          type: :object,
+          additionalProperties: false,
+          properties: resource_attributes(instance_of, nil, format, false),
+          required: required_attributes(instance_of)
+        }
+        |> add_null_for_non_required()
+      else
+        resource_attribute_type(%{attr | type: Ash.Type.Map}, resource, format)
+      end
+    else
+      %Schema{}
+    end
+  end
+
+  defp resource_attribute_type(%{type: type} = attr, resource, format) do
+    constraints = attr.constraints
+
+    cond do
+      AshJsonApi.JsonSchema.embedded?(type) ->
+        %Schema{
+          type: :object,
+          additionalProperties: false,
+          properties: resource_attributes(type, nil, format, false),
+          required: required_attributes(type)
+        }
+        |> add_null_for_non_required()
+
+      function_exported?(type, :json_schema, 1) ->
+        type.json_schema(constraints)
+
+      Ash.Type.NewType.new_type?(type) ->
+        new_constraints = Ash.Type.NewType.constraints(type, constraints)
+        new_type = Ash.Type.NewType.subtype_of(type)
+
+        resource_attribute_type(
+          Map.merge(attr, %{type: Ash.Type.get_type(new_type), constraints: new_constraints}),
+          resource,
+          format
+        )
+
+      Spark.implements_behaviour?(type, Ash.Type.Enum) ->
+        %Schema{
+          type: :string,
+          enum: Enum.map(type.values(), &to_string/1)
+        }
+
+      true ->
+        %Schema{}
+    end
+  end
+
+  @spec resource_attributes(
+          resource :: module,
+          fields :: nil | list(atom),
+          format :: content_type_format()
+        ) :: %{
+          atom => Schema.t()
+        }
+  defp resource_attributes(resource, fields, format \\ :json, hide_pkeys? \\ true) do
+    resource
+    |> Ash.Resource.Info.public_attributes()
+    |> Enum.concat(Ash.Resource.Info.public_calculations(resource))
+    |> Enum.concat(
+      Ash.Resource.Info.public_aggregates(resource)
+      |> AshJsonApi.JsonSchema.set_aggregate_constraints(resource)
+    )
+    |> Enum.map(fn
+      %Ash.Resource.Aggregate{} = agg ->
+        field =
+          if agg.field do
+            related = Ash.Resource.Info.related(resource, agg.relationship_path)
+            Ash.Resource.Info.field(related, agg.field)
+          end
+
+        field_type =
+          if field do
+            field.type
+          end
+
+        field_constraints =
+          if field do
+            field.constraints
+          end
+
+        {:ok, type, constraints} =
+          Aggregate.kind_to_type(agg.kind, field_type, field_constraints)
+
+        type = Ash.Type.get_type(type)
+
+        allow_nil? =
+          is_nil(Ash.Query.Aggregate.default_value(agg.kind))
+
+        %{
+          name: agg.name,
+          description: agg.description,
+          type: type,
+          constraints: constraints,
+          allow_nil?: allow_nil?
+        }
+
+      other ->
+        other
+    end)
+    |> then(fn keys ->
+      if hide_pkeys? do
+        Enum.reject(keys, &AshJsonApi.Resource.only_primary_key?(resource, &1.name))
+      else
+        keys
+      end
+    end)
+    |> Map.new(fn attr ->
+      {attr.name,
+       resource_attribute_type(attr, resource, format)
+       |> with_attribute_description(attr)
+       |> with_attribute_nullability(attr)
+       |> with_comment_on_included(attr, fields)}
+    end)
+  end
+
+  defp required_attributes(resource) do
+    resource
+    |> Ash.Resource.Info.public_attributes()
+    |> Enum.reject(&(&1.allow_nil? || AshJsonApi.Resource.only_primary_key?(resource, &1.name)))
+    |> Enum.map(& &1.name)
+  end
+
+  defp with_comment_on_included(%Schema{} = schema, attr, fields) do
+    new_description =
+      if is_nil(fields) || attr.name in fields do
+        case schema.description do
+          nil ->
+            "Field included by default."
+
+          description ->
+            if String.ends_with?(description, ["!", "."]) do
+              description <> " Field included by default."
+            else
+              description <> ". Field included by default."
+            end
+        end
+      else
+        schema.description
+      end
+
+    %{schema | description: new_description}
+  end
+
+  defp with_comment_on_included(schema, attr, fields) do
+    key = if Map.has_key?(schema, :description), do: :description, else: "description"
+
+    new_description =
+      if is_nil(fields) || attr.name in fields do
+        case Map.get(schema, key) do
+          nil ->
+            "Field included by default."
+
+          description ->
+            if String.ends_with?(description, ["!", "."]) do
+              description <> " Field included by default."
+            else
+              description <> ". Field included by default."
+            end
+        end
+      else
+        Map.get(schema, key) || ""
+      end
+
+    Map.put(schema, key, new_description)
+  end
+
+  defp with_attribute_nullability(%Schema{type: nil} = schema, _), do: schema
+
+  defp with_attribute_nullability(%Schema{} = schema, attr) do
+    if attr.allow_nil? do
+      %{schema | nullable: true}
+    else
+      schema
+    end
+  end
+
+  defp with_attribute_nullability(schema, attr) do
+    if schema["type"] == "any" || schema[:type] == :any do
+      schema
+    else
+      if attr.allow_nil? do
+        schema
+        |> Map.put("nullable", true)
+        |> Map.delete(:nullable)
+      else
+        schema
+      end
+    end
+  end
+end
