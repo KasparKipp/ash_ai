@@ -26,6 +26,7 @@ defmodule AshAi.OpenApi do
       action_type,
       format
     )
+    |> OpenApiSpex.OpenApi.to_map()
   end
 
   def resource_write_attribute_type(
@@ -49,6 +50,7 @@ defmodule AshAi.OpenApi do
         )
     }
     |> with_attribute_description(attr)
+    |> OpenApiSpex.OpenApi.to_map()
   end
 
   def resource_write_attribute_type(
@@ -57,35 +59,38 @@ defmodule AshAi.OpenApi do
         action_type,
         format
       ) do
-    if constraints[:fields] && constraints[:fields] != [] do
-      %Schema{
-        type: :object,
-        additionalProperties: false,
-        properties:
-          Map.new(constraints[:fields], fn {key, config} ->
-            {key,
-             resource_write_attribute_type(
-               %{
-                 attr
-                 | type: config[:type],
-                   constraints: config[:constraints] || []
-               }
-               |> Map.put(:description, config[:description] || nil),
-               resource,
-               action_type,
-               format
-             )}
-          end),
-        required:
-          constraints[:fields]
-          |> Enum.filter(fn {_, config} -> !config[:allow_nil?] end)
-          |> Enum.map(&elem(&1, 0))
-      }
-      |> add_null_for_non_required()
-    else
-      %Schema{type: :object}
-    end
-    |> with_attribute_description(attr)
+    schema =
+      if constraints[:fields] && constraints[:fields] != [] do
+        %Schema{
+          type: :object,
+          additionalProperties: false,
+          properties:
+            Map.new(constraints[:fields], fn {key, config} ->
+              {key,
+               resource_write_attribute_type(
+                 %{
+                   attr
+                   | type: config[:type],
+                     constraints: config[:constraints] || []
+                 }
+                 |> Map.put(:description, config[:description] || nil),
+                 resource,
+                 action_type,
+                 format
+               )}
+            end),
+          required:
+            constraints[:fields]
+            |> Enum.filter(fn {_, config} -> !config[:allow_nil?] end)
+            |> Enum.map(&elem(&1, 0))
+        }
+        |> add_null_for_non_required()
+      else
+        %Schema{type: :object}
+      end
+      |> with_attribute_description(attr)
+
+    OpenApiSpex.OpenApi.to_map(schema)
   end
 
   def resource_write_attribute_type(
@@ -112,6 +117,7 @@ defmodule AshAi.OpenApi do
     }
     |> unwrap_any_of()
     |> with_attribute_description(attr)
+    |> OpenApiSpex.OpenApi.to_map(schema)
   end
 
   def resource_write_attribute_type(
@@ -135,6 +141,7 @@ defmodule AshAi.OpenApi do
       %Schema{}
     end
     |> with_attribute_description(attr)
+    |> OpenApiSpex.OpenApi.to_map()
   end
 
   def resource_write_attribute_type(%{type: type} = attr, resource, action_type, format) do
@@ -160,6 +167,7 @@ defmodule AshAi.OpenApi do
         resource_attribute_type(attr, resource, format)
     end
     |> with_attribute_description(attr)
+    |> OpenApiSpex.OpenApi.to_map()
   end
 
   @spec add_null_for_non_required(Schema.t()) :: Schema.t()
@@ -889,17 +897,20 @@ defmodule AshAi.OpenApi do
         []
       end
 
-    if fields == [] do
-      nil
-    else
-      %Schema{
-        type: :object,
-        required: required,
-        properties: Map.new(fields_with_input),
-        additionalProperties: false
-      }
-      |> with_attribute_description(calculation)
-    end
+    schema =
+      if fields == [] do
+        nil
+      else
+        %Schema{
+          type: :object,
+          required: required,
+          properties: Map.new(fields_with_input),
+          additionalProperties: false
+        }
+        |> with_attribute_description(calculation)
+      end
+
+    OpenApiSpex.Schema.to_map(schema)
   end
 
   def raw_filter_type(attribute_or_aggregate, resource) do
@@ -916,16 +927,19 @@ defmodule AshAi.OpenApi do
         filter_fields(operator, type, array_type?, attribute_or_aggregate, resource)
       end)
 
-    if fields == [] do
-      nil
-    else
-      %Schema{
-        type: :object,
-        properties: Map.new(fields),
-        additionalProperties: false
-      }
-      |> with_attribute_description(attribute_or_aggregate)
-    end
+    schema =
+      if fields == [] do
+        nil
+      else
+        %Schema{
+          type: :object,
+          properties: Map.new(fields),
+          additionalProperties: false
+        }
+        |> with_attribute_description(attribute_or_aggregate)
+      end
+
+    OpenApiSpex.Schema.to_map(schema)
   end
 
   defp restrict_for_lists(operators, {:array, _}) do

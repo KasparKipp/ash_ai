@@ -290,7 +290,6 @@ defmodule AshAi do
               action.type,
               :json
             )
-            |> OpenApiSpex.OpenApi.to_map()
 
           {attribute.name, value}
         end)
@@ -302,7 +301,6 @@ defmodule AshAi do
       |> Enum.reduce(attributes, fn argument, attributes ->
         value =
           AshAi.OpenApi.resource_write_attribute_type(argument, resource, :create, :json)
-          |> OpenApiSpex.OpenApi.to_map()
 
         Map.put(
           attributes,
@@ -809,7 +807,6 @@ defmodule AshAi do
           |> Map.new(fn field ->
             value =
               AshAi.OpenApi.raw_filter_type(field, resource)
-              |> OpenApiSpex.OpenApi.to_map()
 
             {field.name, value}
           end)
@@ -897,7 +894,6 @@ defmodule AshAi do
         value =
           Ash.Resource.Info.attribute(resource, key)
           |> AshAi.OpenApi.resource_write_attribute_type(resource, type)
-          |> OpenApiSpex.OpenApi.to_map()
 
         {key, value}
       end)
@@ -932,7 +928,6 @@ defmodule AshAi do
                         resource,
                         :create
                       )
-                      |> OpenApiSpex.OpenApi.to_map()
 
                     {argument.name, value}
                   end)
