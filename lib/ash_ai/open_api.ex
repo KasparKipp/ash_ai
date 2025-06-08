@@ -59,38 +59,36 @@ defmodule AshAi.OpenApi do
         action_type,
         format
       ) do
-    schema =
-      if constraints[:fields] && constraints[:fields] != [] do
-        %Schema{
-          type: :object,
-          additionalProperties: false,
-          properties:
-            Map.new(constraints[:fields], fn {key, config} ->
-              {key,
-               resource_write_attribute_type(
-                 %{
-                   attr
-                   | type: config[:type],
-                     constraints: config[:constraints] || []
-                 }
-                 |> Map.put(:description, config[:description] || nil),
-                 resource,
-                 action_type,
-                 format
-               )}
-            end),
-          required:
-            constraints[:fields]
-            |> Enum.filter(fn {_, config} -> !config[:allow_nil?] end)
-            |> Enum.map(&elem(&1, 0))
-        }
-        |> add_null_for_non_required()
-      else
-        %Schema{type: :object}
-      end
-      |> with_attribute_description(attr)
-
-    OpenApiSpex.OpenApi.to_map(schema)
+    if constraints[:fields] && constraints[:fields] != [] do
+      %Schema{
+        type: :object,
+        additionalProperties: false,
+        properties:
+          Map.new(constraints[:fields], fn {key, config} ->
+            {key,
+             resource_write_attribute_type(
+               %{
+                 attr
+                 | type: config[:type],
+                   constraints: config[:constraints] || []
+               }
+               |> Map.put(:description, config[:description] || nil),
+               resource,
+               action_type,
+               format
+             )}
+          end),
+        required:
+          constraints[:fields]
+          |> Enum.filter(fn {_, config} -> !config[:allow_nil?] end)
+          |> Enum.map(&elem(&1, 0))
+      }
+      |> add_null_for_non_required()
+    else
+      %Schema{type: :object}
+    end
+    |> with_attribute_description(attr)
+    |> OpenApiSpex.OpenApi.to_map()
   end
 
   def resource_write_attribute_type(
@@ -117,7 +115,7 @@ defmodule AshAi.OpenApi do
     }
     |> unwrap_any_of()
     |> with_attribute_description(attr)
-    |> OpenApiSpex.OpenApi.to_map(schema)
+    |> OpenApiSpex.OpenApi.to_map()
   end
 
   def resource_write_attribute_type(
