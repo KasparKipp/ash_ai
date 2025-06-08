@@ -109,12 +109,6 @@ defmodule AshAi do
     imports: [AshAi.Actions],
     transformers: [AshAi.Transformers.Vectorize]
 
-  defimpl Jason.Encoder, for: OpenApiSpex.Schema do
-    def encode(value, opts) do
-      OpenApiSpex.OpenApi.to_map(value) |> Jason.Encoder.Map.encode(opts)
-    end
-  end
-
   defmodule Options do
     @moduledoc false
     use Spark.Options.Validator,
@@ -296,6 +290,7 @@ defmodule AshAi do
               action.type,
               :json
             )
+            |> OpenApiSpex.OpenApi.to_map()
 
           {attribute.name, value}
         end)
@@ -307,6 +302,7 @@ defmodule AshAi do
       |> Enum.reduce(attributes, fn argument, attributes ->
         value =
           AshJsonApi.OpenApi.resource_write_attribute_type(argument, resource, :create, :json)
+          |> OpenApiSpex.OpenApi.to_map()
 
         Map.put(
           attributes,
@@ -314,8 +310,6 @@ defmodule AshAi do
           value
         )
       end)
-      |> Jason.encode!()
-      |> Jason.decode!()
 
     %{
       type: :object,
@@ -813,12 +807,12 @@ defmodule AshAi do
         properties:
           Ash.Resource.Info.fields(resource, [:attributes, :aggregates, :calculations])
           |> Enum.filter(&(&1.public? && &1.filterable?))
-          |> Enum.map(fn field ->
-            {field.name, AshJsonApi.OpenApi.raw_filter_type(field, resource)}
+          |> Map.new(fn field ->
+            value =
+              AshJsonApi.OpenApi.raw_filter_type(field, resource)
+              |> OpenApiSpex.OpenApi.to_map()
+            {field.name, value}
           end)
-          |> Enum.into(%{})
-          |> Jason.encode!()
-          |> Jason.decode!()
       },
       result_type: %{
         default: "run_query",
@@ -900,9 +894,12 @@ defmodule AshAi do
        when type in [:update, :destroy] do
     pkey =
       Map.new(Ash.Resource.Info.primary_key(resource), fn key ->
-        {key,
-         Ash.Resource.Info.attribute(resource, key)
-         |> AshJsonApi.OpenApi.resource_write_attribute_type(resource, type)}
+        value =
+          Ash.Resource.Info.attribute(resource, key)
+          |> AshJsonApi.OpenApi.resource_write_attribute_type(resource, type)
+          |> OpenApiSpex.OpenApi.to_map()
+
+        {key, value}
       end)
 
     Map.merge(properties, pkey)
@@ -929,8 +926,11 @@ defmodule AshAi do
               Map.new(fields, fn field ->
                 inputs =
                   Enum.map(field.arguments, fn argument ->
-                    {argument.name,
-                     AshJsonApi.OpenApi.resource_write_attribute_type(argument, resource, :create)}
+                    value =
+                      AshJsonApi.OpenApi.resource_write_attribute_type(argument, resource, :create)
+                      |> OpenApiSpex.OpenApi.to_map()
+
+                    {argument.name, value}
                   end)
 
                 required =
