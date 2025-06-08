@@ -410,7 +410,7 @@ defmodule AshAi do
                     end
                     |> then(fn result ->
                       result
-                      |> AshJsonApi.Serializer.serialize_value({:array, resource}, [], domain,
+                      |> AshAi.Serializer.serialize_value({:array, resource}, [], domain,
                         load: load
                       )
                       |> Jason.encode!()
@@ -429,7 +429,7 @@ defmodule AshAi do
                     end
                     |> then(fn result ->
                       result
-                      |> AshJsonApi.Serializer.serialize_value(Ash.Type.Integer, [], domain)
+                      |> AshAi.Serializer.serialize_value(Ash.Type.Integer, [], domain)
                       |> Jason.encode!()
                       |> then(&{:ok, &1, result})
                     end)
@@ -446,7 +446,7 @@ defmodule AshAi do
                     end
                     |> then(fn result ->
                       result
-                      |> AshJsonApi.Serializer.serialize_value(Ash.Type.Boolean, [], domain)
+                      |> AshAi.Serializer.serialize_value(Ash.Type.Boolean, [], domain)
                       |> Jason.encode!()
                       |> then(&{:ok, &1, result})
                     end)
@@ -484,7 +484,7 @@ defmodule AshAi do
                     end
                     |> then(fn result ->
                       result
-                      |> AshJsonApi.Serializer.serialize_value(
+                      |> AshAi.Serializer.serialize_value(
                         aggregate.type,
                         aggregate.constraints,
                         domain
@@ -516,7 +516,7 @@ defmodule AshAi do
               |> case do
                 %Ash.BulkResult{status: :success, records: [result]} ->
                   result
-                  |> AshJsonApi.Serializer.serialize_value(resource, [], domain, load: load)
+                  |> AshAi.Serializer.serialize_value(resource, [], domain, load: load)
                   |> Jason.encode!()
                   |> then(&{:ok, &1, result})
 
@@ -547,7 +547,7 @@ defmodule AshAi do
               |> case do
                 %Ash.BulkResult{status: :success, records: [result]} ->
                   result
-                  |> AshJsonApi.Serializer.serialize_value(resource, [], domain, load: load)
+                  |> AshAi.Serializer.serialize_value(resource, [], domain, load: load)
                   |> Jason.encode!()
                   |> then(&{:ok, &1, result})
 
@@ -563,7 +563,7 @@ defmodule AshAi do
               |> Ash.create!(load: load)
               |> then(fn result ->
                 result
-                |> AshJsonApi.Serializer.serialize_value(resource, [], domain, load: load)
+                |> AshAi.Serializer.serialize_value(resource, [], domain, load: load)
                 |> Jason.encode!()
                 |> then(&{:ok, &1, result})
               end)
@@ -575,7 +575,7 @@ defmodule AshAi do
               |> then(fn result ->
                 if action.returns do
                   result
-                  |> AshJsonApi.Serializer.serialize_value(action.returns, [], domain, load: load)
+                  |> AshAi.Serializer.serialize_value(action.returns, [], domain, load: load)
                   |> Jason.encode!()
                 else
                   "success"
