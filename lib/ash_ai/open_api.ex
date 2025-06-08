@@ -8,7 +8,7 @@ defmodule AshAi.OpenApi do
           resource :: Ash.Resource.t(),
           action_type :: atom,
           format :: content_type_format()
-        ) :: Schema.t()
+        ) :: map()
   @doc false
   def resource_write_attribute_type(attribute, resource, action_type, format \\ :json)
 
