@@ -281,32 +281,56 @@ defmodule AshAi do
   end
 
   defp parameter_schema(_domain, resource, action) do
-    AshJsonApi.OpenApi.write_attributes(
-      resource,
-      action.arguments,
-      action,
-      %{type: :action, route: "/"},
-      :json
-    )
-    |> then(fn attrs ->
-      %{
-        type: :object,
-        properties:
-          %{
-            input: %{
-              type: :object,
-              properties: attrs,
-              required:
-                AshJsonApi.OpenApi.required_write_attributes(resource, action.arguments, action)
-            }
+    attributes =
+      if action.type in [:action, :read] do
+        %{}
+      else
+        resource
+        |> Ash.Resource.Info.attributes()
+        |> Enum.filter(&(&1.name in action.accept && &1.writable?))
+        |> Map.new(fn attribute ->
+          value =
+            AshJsonApi.OpenApi.resource_write_attribute_type(
+              attribute,
+              resource,
+              action.type,
+              :json
+            )
+
+          {attribute.name, value}
+        end)
+      end
+
+    properties =
+      action.arguments
+      |> Enum.filter(& &1.public?)
+      |> Enum.reduce(attributes, fn argument, attributes ->
+        value =
+          AshJsonApi.OpenApi.resource_write_attribute_type(argument, resource, :create, :json)
+
+        Map.put(
+          attributes,
+          argument.name,
+          value
+        )
+      end)
+      |> Jason.encode!()
+      |> Jason.decode!()
+
+    %{
+      type: :object,
+      properties:
+        %{
+          input: %{
+            type: :object,
+            properties: properties,
+            required:
+              AshJsonApi.OpenApi.required_write_attributes(resource, action.arguments, action)
           }
-          |> add_action_specific_properties(resource, action),
-        required: [:input],
-        additionalProperties: false
-      }
-    end)
-    |> Jason.encode!()
-    |> Jason.decode!()
+        }
+        |> add_action_specific_properties(resource, action),
+      required: [:input]
+    }
   end
 
   defp function(%Tool{
