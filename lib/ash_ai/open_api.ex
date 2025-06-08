@@ -379,7 +379,7 @@ defmodule AshAi.OpenApi do
   end
 
   @doc false
-  defp required_write_attributes(resource, arguments, action, route \\ nil) do
+  def required_write_attributes(resource, arguments, action, route \\ nil) do
     arguments =
       arguments
       |> Enum.filter(& &1.public?)

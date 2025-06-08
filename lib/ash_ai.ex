@@ -318,8 +318,7 @@ defmodule AshAi do
           input: %{
             type: :object,
             properties: properties,
-            required:
-              AshJsonApi.OpenApi.required_write_attributes(resource, action.arguments, action)
+            required: AshAi.OpenApi.required_write_attributes(resource, action.arguments, action)
           }
         }
         |> add_action_specific_properties(resource, action),
