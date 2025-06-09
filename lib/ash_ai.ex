@@ -109,12 +109,6 @@ defmodule AshAi do
     imports: [AshAi.Actions],
     transformers: [AshAi.Transformers.Vectorize]
 
-  defimpl Jason.Encoder, for: OpenApiSpex.Schema do
-    def encode(value, opts) do
-      OpenApiSpex.OpenApi.to_map(value) |> Jason.Encoder.Map.encode(opts)
-    end
-  end
-
   defmodule Options do
     @moduledoc false
     use Spark.Options.Validator,
@@ -281,30 +275,54 @@ defmodule AshAi do
   end
 
   defp parameter_schema(_domain, resource, action) do
-    AshJsonApi.OpenApi.write_attributes(
-      resource,
-      action.arguments,
-      action,
-      %{type: :action, route: "/"},
-      :json
-    )
-    |> then(fn attrs ->
-      %{
-        type: :object,
-        properties:
-          %{
-            input: %{
-              type: :object,
-              properties: attrs,
-              required:
-                AshJsonApi.OpenApi.required_write_attributes(resource, action.arguments, action)
-            }
+    attributes =
+      if action.type in [:action, :read] do
+        %{}
+      else
+        resource
+        |> Ash.Resource.Info.attributes()
+        |> Enum.filter(&(&1.name in action.accept && &1.writable?))
+        |> Map.new(fn attribute ->
+          value =
+            AshAi.OpenApi.resource_write_attribute_type(
+              attribute,
+              resource,
+              action.type,
+              :json
+            )
+
+          {attribute.name, value}
+        end)
+      end
+
+    properties =
+      action.arguments
+      |> Enum.filter(& &1.public?)
+      |> Enum.reduce(attributes, fn argument, attributes ->
+        value =
+          AshAi.OpenApi.resource_write_attribute_type(argument, resource, :create, :json)
+
+        Map.put(
+          attributes,
+          argument.name,
+          value
+        )
+      end)
+
+    %{
+      type: :object,
+      properties:
+        %{
+          input: %{
+            type: :object,
+            properties: properties,
+            required: AshAi.OpenApi.required_write_attributes(resource, action.arguments, action)
           }
-          |> add_action_specific_properties(resource, action),
-        required: [:input],
-        additionalProperties: false
-      }
-    end)
+        }
+        |> add_action_specific_properties(resource, action),
+      required: [:input],
+      additionalProperties: false
+    }
     |> Jason.encode!()
     |> Jason.decode!()
   end
@@ -393,7 +411,7 @@ defmodule AshAi do
                     end
                     |> then(fn result ->
                       result
-                      |> AshJsonApi.Serializer.serialize_value({:array, resource}, [], domain,
+                      |> AshAi.Serializer.serialize_value({:array, resource}, [], domain,
                         load: load
                       )
                       |> Jason.encode!()
@@ -412,7 +430,7 @@ defmodule AshAi do
                     end
                     |> then(fn result ->
                       result
-                      |> AshJsonApi.Serializer.serialize_value(Ash.Type.Integer, [], domain)
+                      |> AshAi.Serializer.serialize_value(Ash.Type.Integer, [], domain)
                       |> Jason.encode!()
                       |> then(&{:ok, &1, result})
                     end)
@@ -429,7 +447,7 @@ defmodule AshAi do
                     end
                     |> then(fn result ->
                       result
-                      |> AshJsonApi.Serializer.serialize_value(Ash.Type.Boolean, [], domain)
+                      |> AshAi.Serializer.serialize_value(Ash.Type.Boolean, [], domain)
                       |> Jason.encode!()
                       |> then(&{:ok, &1, result})
                     end)
@@ -467,7 +485,7 @@ defmodule AshAi do
                     end
                     |> then(fn result ->
                       result
-                      |> AshJsonApi.Serializer.serialize_value(
+                      |> AshAi.Serializer.serialize_value(
                         aggregate.type,
                         aggregate.constraints,
                         domain
@@ -499,7 +517,7 @@ defmodule AshAi do
               |> case do
                 %Ash.BulkResult{status: :success, records: [result]} ->
                   result
-                  |> AshJsonApi.Serializer.serialize_value(resource, [], domain, load: load)
+                  |> AshAi.Serializer.serialize_value(resource, [], domain, load: load)
                   |> Jason.encode!()
                   |> then(&{:ok, &1, result})
 
@@ -530,7 +548,7 @@ defmodule AshAi do
               |> case do
                 %Ash.BulkResult{status: :success, records: [result]} ->
                   result
-                  |> AshJsonApi.Serializer.serialize_value(resource, [], domain, load: load)
+                  |> AshAi.Serializer.serialize_value(resource, [], domain, load: load)
                   |> Jason.encode!()
                   |> then(&{:ok, &1, result})
 
@@ -546,7 +564,7 @@ defmodule AshAi do
               |> Ash.create!(load: load)
               |> then(fn result ->
                 result
-                |> AshJsonApi.Serializer.serialize_value(resource, [], domain, load: load)
+                |> AshAi.Serializer.serialize_value(resource, [], domain, load: load)
                 |> Jason.encode!()
                 |> then(&{:ok, &1, result})
               end)
@@ -558,7 +576,7 @@ defmodule AshAi do
               |> then(fn result ->
                 if action.returns do
                   result
-                  |> AshJsonApi.Serializer.serialize_value(action.returns, [], domain, load: load)
+                  |> AshAi.Serializer.serialize_value(action.returns, [], domain, load: load)
                   |> Jason.encode!()
                 else
                   "success"
@@ -789,12 +807,12 @@ defmodule AshAi do
         properties:
           Ash.Resource.Info.fields(resource, [:attributes, :aggregates, :calculations])
           |> Enum.filter(&(&1.public? && &1.filterable?))
-          |> Enum.map(fn field ->
-            {field.name, AshJsonApi.OpenApi.raw_filter_type(field, resource)}
+          |> Map.new(fn field ->
+            value =
+              AshAi.OpenApi.raw_filter_type(field, resource)
+
+            {field.name, value}
           end)
-          |> Enum.into(%{})
-          |> Jason.encode!()
-          |> Jason.decode!()
       },
       result_type: %{
         default: "run_query",
@@ -876,9 +894,11 @@ defmodule AshAi do
        when type in [:update, :destroy] do
     pkey =
       Map.new(Ash.Resource.Info.primary_key(resource), fn key ->
-        {key,
-         Ash.Resource.Info.attribute(resource, key)
-         |> AshJsonApi.OpenApi.resource_write_attribute_type(resource, type)}
+        value =
+          Ash.Resource.Info.attribute(resource, key)
+          |> AshAi.OpenApi.resource_write_attribute_type(resource, type)
+
+        {key, value}
       end)
 
     Map.merge(properties, pkey)
@@ -905,8 +925,14 @@ defmodule AshAi do
               Map.new(fields, fn field ->
                 inputs =
                   Enum.map(field.arguments, fn argument ->
-                    {argument.name,
-                     AshJsonApi.OpenApi.resource_write_attribute_type(argument, resource, :create)}
+                    value =
+                      AshAi.OpenApi.resource_write_attribute_type(
+                        argument,
+                        resource,
+                        :create
+                      )
+
+                    {argument.name, value}
                   end)
 
                 required =

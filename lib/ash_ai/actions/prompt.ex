@@ -176,7 +176,7 @@ defmodule AshAi.Actions.Prompt do
   defp get_json_schema(input) do
     if input.action.returns do
       schema =
-        AshJsonApi.OpenApi.resource_write_attribute_type(
+        AshAi.OpenApi.resource_write_attribute_type(
           %{name: :result, type: input.action.returns, constraints: input.action.constraints},
           nil,
           :create
@@ -187,11 +187,11 @@ defmodule AshAi.Actions.Prompt do
       else
         schema
       end
+      |> Jason.encode!()
+      |> Jason.decode!()
     else
       %{"type" => "null"}
     end
-    |> Jason.encode!()
-    |> Jason.decode!()
   end
 
   defp get_adapter(opts, llm) do
