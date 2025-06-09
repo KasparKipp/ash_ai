@@ -320,8 +320,11 @@ defmodule AshAi do
           }
         }
         |> add_action_specific_properties(resource, action),
-      required: [:input]
+      required: [:input],
+      additionalProperties: false
     }
+    |> Jason.encode!()
+    |> Jason.decode!()
   end
 
   defp function(%Tool{

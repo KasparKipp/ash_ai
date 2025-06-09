@@ -26,7 +26,6 @@ defmodule AshAi.OpenApi do
       action_type,
       format
     )
-    |> OpenApiSpex.OpenApi.to_map()
   end
 
   def resource_write_attribute_type(
@@ -35,7 +34,7 @@ defmodule AshAi.OpenApi do
         action_type,
         format
       ) do
-    %Schema{
+    %{
       type: :array,
       items:
         resource_write_attribute_type(
@@ -50,7 +49,6 @@ defmodule AshAi.OpenApi do
         )
     }
     |> with_attribute_description(attr)
-    |> OpenApiSpex.OpenApi.to_map()
   end
 
   def resource_write_attribute_type(
@@ -60,7 +58,7 @@ defmodule AshAi.OpenApi do
         format
       ) do
     if constraints[:fields] && constraints[:fields] != [] do
-      %Schema{
+      %{
         type: :object,
         additionalProperties: false,
         properties:
@@ -85,10 +83,9 @@ defmodule AshAi.OpenApi do
       }
       |> add_null_for_non_required()
     else
-      %Schema{type: :object}
+      %{type: :object}
     end
     |> with_attribute_description(attr)
-    |> OpenApiSpex.OpenApi.to_map()
   end
 
   def resource_write_attribute_type(
@@ -127,6 +124,7 @@ defmodule AshAi.OpenApi do
     if instance_of = constraints[:instance_of] do
       if AshJsonApi.JsonSchema.embedded?(instance_of) && !constraints[:fields] do
         embedded_type_input(attr, action_type, format)
+        |> OpenApiSpex.OpenApi.to_map()
       else
         resource_write_attribute_type(
           %{attr | type: Ash.Type.Map},
@@ -136,10 +134,9 @@ defmodule AshAi.OpenApi do
         )
       end
     else
-      %Schema{}
+      %{}
     end
     |> with_attribute_description(attr)
-    |> OpenApiSpex.OpenApi.to_map()
   end
 
   def resource_write_attribute_type(%{type: type} = attr, resource, action_type, format) do
@@ -149,6 +146,7 @@ defmodule AshAi.OpenApi do
 
       :erlang.function_exported(type, :json_write_schema, 1) ->
         type.json_write_schema(attr.constraints)
+        |> OpenApiSpex.OpenApi.to_map()
 
       Ash.Type.NewType.new_type?(type) ->
         new_constraints = Ash.Type.NewType.constraints(type, attr.constraints)
@@ -165,11 +163,14 @@ defmodule AshAi.OpenApi do
         resource_attribute_type(attr, resource, format)
     end
     |> with_attribute_description(attr)
-    |> OpenApiSpex.OpenApi.to_map()
   end
 
-  @spec add_null_for_non_required(Schema.t()) :: Schema.t()
-  defp add_null_for_non_required(%Schema{required: required} = schema)
+  @spec add_null_for_non_required(map()) :: map()
+  defp add_null_for_non_required(%Schema{} = schema) do
+    raise "[REFACTORING] Schema must be a map to add_null_for_non_required/1: #{inspect(schema)}"
+  end
+
+  defp add_null_for_non_required(%{required: required} = schema)
        when is_list(required) do
     Map.update!(schema, :properties, fn
       properties when is_map(properties) ->
@@ -211,9 +212,14 @@ defmodule AshAi.OpenApi do
   end
 
   @spec with_attribute_description(
-          Schema.t() | map(),
+          map(),
           Ash.Resource.Attribute.t() | Ash.Resource.Actions.Argument.t() | any
-        ) :: Schema.t() | map()
+        ) :: map()
+
+  defp with_attribute_description(%Schema{} = schema, _) do
+    raise "[REFACTORING] Schema must be a map to with_attribute_description/2: #{inspect(schema)}"
+  end
+
   defp with_attribute_description(schema, %{description: nil}) do
     schema
   end
@@ -272,6 +278,7 @@ defmodule AshAi.OpenApi do
                 {options, nested_options ++ to_add}
 
               schema ->
+                schema = OpenApiSpex.OpenApi.to_map(schema)
                 {options, [schema | to_add]}
             end
 
@@ -288,6 +295,7 @@ defmodule AshAi.OpenApi do
         one
 
       many ->
+        many = many |> Enum.map(&OpenApiSpex.OpenApi.to_map/1)
         %{"anyOf" => many}
     end
     |> then(fn result ->
@@ -366,7 +374,7 @@ defmodule AshAi.OpenApi do
         |> Enum.to_list()
       end
 
-    %Schema{
+    %{
       type: :object,
       additionalProperties: false,
       properties:
@@ -385,7 +393,7 @@ defmodule AshAi.OpenApi do
   end
 
   @doc false
-  def required_write_attributes(resource, arguments, action, route \\ nil) do
+  def required_write_attributes(resource, arguments, action, _route \\ nil) do
     arguments =
       arguments
       |> Enum.filter(& &1.public?)
@@ -453,7 +461,7 @@ defmodule AshAi.OpenApi do
           term(),
           resource :: Ash.Resource.t(),
           format :: content_type_format()
-        ) :: Schema.t() | map()
+        ) :: map()
   defp resource_attribute_type(type, resource, format \\ :json)
 
   defp resource_attribute_type(%Ash.Resource.Aggregate{type: nil} = agg, resource, format) do
@@ -467,23 +475,23 @@ defmodule AshAi.OpenApi do
   end
 
   defp resource_attribute_type(%{type: Ash.Type.String}, _resource, _format) do
-    %Schema{type: :string}
+    %{type: :string}
   end
 
   defp resource_attribute_type(%{type: Ash.Type.CiString}, _resource, _format) do
-    %Schema{type: :string}
+    %{type: :string}
   end
 
   defp resource_attribute_type(%{type: Ash.Type.Boolean}, _resource, _format) do
-    %Schema{type: :boolean}
+    %{type: :boolean}
   end
 
   defp resource_attribute_type(%{type: Ash.Type.Decimal}, _resource, _format) do
-    %Schema{type: :string}
+    %{type: :string}
   end
 
   defp resource_attribute_type(%{type: Ash.Type.Integer}, _resource, _format) do
-    %Schema{type: :integer}
+    %{type: :integer}
   end
 
   defp resource_attribute_type(
@@ -492,7 +500,7 @@ defmodule AshAi.OpenApi do
          format
        ) do
     if constraints[:fields] && constraints[:fields] != [] do
-      %Schema{
+      %{
         type: :object,
         properties:
           Map.new(constraints[:fields], fn {key, config} ->
@@ -516,54 +524,36 @@ defmodule AshAi.OpenApi do
       }
       |> add_null_for_non_required()
     else
-      %Schema{type: :object}
+      %{type: :object}
     end
   end
 
   defp resource_attribute_type(%{type: Ash.Type.Float}, _resource, _format) do
-    %Schema{type: :number, format: :float}
+    %{type: :number, format: :float}
   end
 
   defp resource_attribute_type(%{type: Ash.Type.Date}, _resource, _format) do
-    %Schema{
-      type: :string,
-      format: "date"
-    }
+    %{type: :number, format: :date}
   end
 
   defp resource_attribute_type(%{type: Ash.Type.UtcDatetime}, _resource, _format) do
-    %Schema{
-      type: :string,
-      format: "date-time"
-    }
+    %{type: :string, format: :"date-time"}
   end
 
   defp resource_attribute_type(%{type: Ash.Type.NaiveDatetime}, _resource, _format) do
-    %Schema{
-      type: :string,
-      format: "date-time"
-    }
+    %{type: :string, format: :"date-time"}
   end
 
   defp resource_attribute_type(%{type: Ash.Type.Time}, _resource, _format) do
-    %Schema{
-      type: :string,
-      format: "time"
-    }
+    %{type: :string, format: :time}
   end
 
   defp resource_attribute_type(%{type: Ash.Type.UUID}, _resource, _format) do
-    %Schema{
-      type: :string,
-      format: "uuid"
-    }
+    %{type: :string, format: :uuid}
   end
 
   defp resource_attribute_type(%{type: Ash.Type.UUIDv7}, _resource, _format) do
-    %Schema{
-      type: :string,
-      format: "uuid"
-    }
+    %{type: :string, format: :uuid}
   end
 
   defp resource_attribute_type(
@@ -572,29 +562,29 @@ defmodule AshAi.OpenApi do
          _format
        ) do
     if one_of = constraints[:one_of] do
-      %Schema{
+      %{
         type: :string,
         enum: Enum.map(one_of, &to_string/1)
       }
     else
-      %Schema{
+      %{
         type: :string
       }
     end
   end
 
   defp resource_attribute_type(%{type: Ash.Type.DurationName}, _resource, _format) do
-    %Schema{
+    %{
       type: :string,
       enum: Enum.map(Ash.Type.DurationName.values(), &to_string/1)
     }
   end
 
   defp resource_attribute_type(%{type: Ash.Type.File}, _resource, :json),
-    do: %Schema{type: :string, format: :byte, description: "Base64 encoded file content"}
+    do: %{type: :string, format: :byte, description: "Base64 encoded file content"}
 
   defp resource_attribute_type(%{type: Ash.Type.File}, _resource, :multipart),
-    do: %Schema{type: :string, description: "Name of multipart upload file"}
+    do: %{type: :string, description: "Name of multipart upload file"}
 
   defp resource_attribute_type(
          %{type: Ash.Type.Union, constraints: constraints} = attr,
@@ -622,7 +612,7 @@ defmodule AshAi.OpenApi do
   end
 
   defp resource_attribute_type(%{type: {:array, type}} = attr, resource, format) do
-    %Schema{
+    %{
       type: :array,
       items:
         resource_attribute_type(
@@ -644,7 +634,7 @@ defmodule AshAi.OpenApi do
        ) do
     if instance_of = constraints[:instance_of] do
       if AshJsonApi.JsonSchema.embedded?(instance_of) && !constraints[:fields] do
-        %Schema{
+        %{
           type: :object,
           additionalProperties: false,
           properties: resource_attributes(instance_of, nil, format, false),
@@ -655,7 +645,7 @@ defmodule AshAi.OpenApi do
         resource_attribute_type(%{attr | type: Ash.Type.Map}, resource, format)
       end
     else
-      %Schema{}
+      %{}
     end
   end
 
@@ -664,7 +654,7 @@ defmodule AshAi.OpenApi do
 
     cond do
       AshJsonApi.JsonSchema.embedded?(type) ->
-        %Schema{
+        %{
           type: :object,
           additionalProperties: false,
           properties: resource_attributes(type, nil, format, false),
@@ -674,6 +664,7 @@ defmodule AshAi.OpenApi do
 
       function_exported?(type, :json_schema, 1) ->
         type.json_schema(constraints)
+        |> OpenApiSpex.OpenApi.to_map()
 
       Ash.Type.NewType.new_type?(type) ->
         new_constraints = Ash.Type.NewType.constraints(type, constraints)
@@ -686,13 +677,13 @@ defmodule AshAi.OpenApi do
         )
 
       Spark.implements_behaviour?(type, Ash.Type.Enum) ->
-        %Schema{
+        %{
           type: :string,
           enum: Enum.map(type.values(), &to_string/1)
         }
 
       true ->
-        %Schema{}
+        %{}
     end
   end
 
@@ -730,7 +721,7 @@ defmodule AshAi.OpenApi do
           end
 
         {:ok, type, constraints} =
-          Aggregate.kind_to_type(agg.kind, field_type, field_constraints)
+          Ash.Query.Aggregate.kind_to_type(agg.kind, field_type, field_constraints)
 
         type = Ash.Type.get_type(type)
 
@@ -769,6 +760,11 @@ defmodule AshAi.OpenApi do
     |> Ash.Resource.Info.public_attributes()
     |> Enum.reject(&(&1.allow_nil? || AshJsonApi.Resource.only_primary_key?(resource, &1.name)))
     |> Enum.map(& &1.name)
+  end
+
+  @spec with_comment_on_included(map(), map(), nil | list(atom)) :: map()
+  defp with_comment_on_included(%Schema{} = schema, _attr, _fields) do
+    raise "[REFACTORING] Schema must be a map to with_comment_on_included/3 #{inspect(schema)}"
   end
 
   defp with_comment_on_included(%Schema{} = schema, attr, fields) do
@@ -815,27 +811,22 @@ defmodule AshAi.OpenApi do
     Map.put(schema, key, new_description)
   end
 
-  defp with_attribute_nullability(%Schema{type: nil} = schema, _), do: schema
-
-  defp with_attribute_nullability(%Schema{} = schema, attr) do
-    if attr.allow_nil? do
-      %{schema | nullable: true}
-    else
-      schema
-    end
+  defp with_attribute_nullability(%Schema{} = schema, _attr) do
+    raise "[REFACTORING] Schema must be a map to with_attribute_nullability/2 #{inspect(schema)}"
   end
 
-  defp with_attribute_nullability(schema, attr) do
-    if schema["type"] == "any" || schema[:type] == :any do
-      schema
-    else
-      if attr.allow_nil? do
+  defp with_attribute_nullability(%{type: nil} = schema, _), do: schema
+
+  defp with_attribute_nullability(%{} = schema, attr) do
+    cond do
+      schema.type == "any" || schema.type == :any ->
         schema
-        |> Map.put("nullable", true)
-        |> Map.delete(:nullable)
-      else
+
+      attr.allow_nil? ->
+        Map.put(schema, :nullable, true)
+
+      true ->
         schema
-      end
     end
   end
 
@@ -860,14 +851,16 @@ defmodule AshAi.OpenApi do
             end
           end)
 
+        schema =
+          %{
+            type: :object,
+            properties: Map.new(inputs),
+            required: required,
+            additionalProperties: false
+          }
+
         [
-          {:input,
-           %Schema{
-             type: :object,
-             properties: Map.new(inputs),
-             required: required,
-             additionalProperties: false
-           }}
+          {:input, schema}
         ]
       end
 
@@ -895,20 +888,17 @@ defmodule AshAi.OpenApi do
         []
       end
 
-    schema =
-      if fields == [] do
-        nil
-      else
-        %Schema{
-          type: :object,
-          required: required,
-          properties: Map.new(fields_with_input),
-          additionalProperties: false
-        }
-        |> with_attribute_description(calculation)
-      end
-
-    OpenApiSpex.Schema.to_map(schema)
+    if fields == [] do
+      nil
+    else
+      %{
+        type: :object,
+        required: required,
+        properties: Map.new(fields_with_input),
+        additionalProperties: false
+      }
+      |> with_attribute_description(calculation)
+    end
   end
 
   def raw_filter_type(attribute_or_aggregate, resource) do
@@ -925,19 +915,17 @@ defmodule AshAi.OpenApi do
         filter_fields(operator, type, array_type?, attribute_or_aggregate, resource)
       end)
 
-    schema =
-      if fields == [] do
-        nil
-      else
-        %Schema{
-          type: :object,
-          properties: Map.new(fields),
-          additionalProperties: false
-        }
-        |> with_attribute_description(attribute_or_aggregate)
-      end
-
-    OpenApiSpex.Schema.to_map(schema)
+    if fields == [] do
+      nil
+    else
+      %{
+        type: :object,
+        properties: Map.new(fields),
+        additionalProperties: false
+        # required: required Missing?
+      }
+      |> with_attribute_description(attribute_or_aggregate)
+    end
   end
 
   defp restrict_for_lists(operators, {:array, _}) do
