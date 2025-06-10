@@ -1,5 +1,4 @@
 defmodule AshAi.OpenApi do
-  alias OpenApiSpex.Schema
 
   @typep content_type_format() :: :json | :multipart
 
@@ -165,11 +164,6 @@ defmodule AshAi.OpenApi do
     |> with_attribute_description(attr)
   end
 
-  @spec add_null_for_non_required(map()) :: map()
-  defp add_null_for_non_required(%Schema{} = schema) do
-    raise "[REFACTORING] Schema must be a map to add_null_for_non_required/1: #{inspect(schema)}"
-  end
-
   defp add_null_for_non_required(%{required: required} = schema)
        when is_list(required) do
     Map.update!(schema, :properties, fn
@@ -215,11 +209,6 @@ defmodule AshAi.OpenApi do
           map(),
           Ash.Resource.Attribute.t() | Ash.Resource.Actions.Argument.t() | any
         ) :: map()
-
-  defp with_attribute_description(%Schema{} = schema, _) do
-    raise "[REFACTORING] Schema must be a map to with_attribute_description/2: #{inspect(schema)}"
-  end
-
   defp with_attribute_description(schema, %{description: nil}) do
     schema
   end
@@ -431,7 +420,7 @@ defmodule AshAi.OpenApi do
           action :: term(),
           route :: term(),
           format :: content_type_format()
-        ) :: %{atom => Schema.t()}
+        ) :: %{atom => map()}
   defp write_attributes(resource, arguments, action, _route, format) do
     attributes =
       if action.type in [:action, :read] do
@@ -690,11 +679,12 @@ defmodule AshAi.OpenApi do
   @spec resource_attributes(
           resource :: module,
           fields :: nil | list(atom),
-          format :: content_type_format()
+          format :: content_type_format(),
+          hide_pkeys? :: boolean()
         ) :: %{
-          atom => Schema.t()
+          atom => map()
         }
-  defp resource_attributes(resource, fields, format \\ :json, hide_pkeys? \\ true) do
+  defp resource_attributes(resource, fields, format, hide_pkeys?) do
     resource
     |> Ash.Resource.Info.public_attributes()
     |> Enum.concat(Ash.Resource.Info.public_calculations(resource))
@@ -763,31 +753,6 @@ defmodule AshAi.OpenApi do
   end
 
   @spec with_comment_on_included(map(), map(), nil | list(atom)) :: map()
-  defp with_comment_on_included(%Schema{} = schema, _attr, _fields) do
-    raise "[REFACTORING] Schema must be a map to with_comment_on_included/3 #{inspect(schema)}"
-  end
-
-  defp with_comment_on_included(%Schema{} = schema, attr, fields) do
-    new_description =
-      if is_nil(fields) || attr.name in fields do
-        case schema.description do
-          nil ->
-            "Field included by default."
-
-          description ->
-            if String.ends_with?(description, ["!", "."]) do
-              description <> " Field included by default."
-            else
-              description <> ". Field included by default."
-            end
-        end
-      else
-        schema.description
-      end
-
-    %{schema | description: new_description}
-  end
-
   defp with_comment_on_included(schema, attr, fields) do
     key = if Map.has_key?(schema, :description), do: :description, else: "description"
 
@@ -809,10 +774,6 @@ defmodule AshAi.OpenApi do
       end
 
     Map.put(schema, key, new_description)
-  end
-
-  defp with_attribute_nullability(%Schema{} = schema, _attr) do
-    raise "[REFACTORING] Schema must be a map to with_attribute_nullability/2 #{inspect(schema)}"
   end
 
   defp with_attribute_nullability(%{type: nil} = schema, _), do: schema
