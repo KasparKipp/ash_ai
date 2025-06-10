@@ -683,7 +683,7 @@ defmodule AshAi.OpenApi do
         ) :: %{
           atom => map()
         }
-  defp resource_attributes(resource, fields, format \\ :json, hide_pkeys? \\ true) do
+  defp resource_attributes(resource, fields, format, hide_pkeys?) do
     resource
     |> Ash.Resource.Info.public_attributes()
     |> Enum.concat(Ash.Resource.Info.public_calculations(resource))
