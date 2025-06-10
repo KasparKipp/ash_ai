@@ -273,8 +273,6 @@ defmodule AshAi.OpenApiTest do
             )
             |> OpenApiSpex.OpenApi.to_map()
 
-            dbg(vendored_schema)
-
           assert vendored_schema == old_schema
         end
       end
