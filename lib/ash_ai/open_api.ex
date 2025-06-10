@@ -679,7 +679,8 @@ defmodule AshAi.OpenApi do
   @spec resource_attributes(
           resource :: module,
           fields :: nil | list(atom),
-          format :: content_type_format()
+          format :: content_type_format(),
+          hide_pkeys? :: boolean()
         ) :: %{
           atom => map()
         }
