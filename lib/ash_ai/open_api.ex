@@ -677,7 +677,7 @@ defmodule AshAi.OpenApi do
     |> Enum.concat(Ash.Resource.Info.public_calculations(resource))
     |> Enum.concat(
       Ash.Resource.Info.public_aggregates(resource)
-      |> AshJsonApi.JsonSchema.set_aggregate_constraints(resource)
+      |> set_aggregate_constraints(resource)
     )
     |> Enum.map(fn
       %Ash.Resource.Aggregate{} = agg ->
@@ -1026,5 +1026,24 @@ defmodule AshAi.OpenApi do
       [^field] -> true
       _ -> false
     end
+  end
+
+  defp set_aggregate_constraints(aggregates, resource) do
+    Enum.map(aggregates, fn %{field: field, relationship_path: relationship_path} = aggregate ->
+      field_type_and_constraints =
+        with field when not is_nil(field) <- field,
+             related when not is_nil(related) <-
+               Ash.Resource.Info.related(resource, relationship_path),
+             attr when not is_nil(attr) <- Ash.Resource.Info.field(related, field) do
+          {attr.type, attr.constraints}
+        end
+
+      {field_type, field_constraints} = field_type_and_constraints || {nil, []}
+
+      {:ok, aggregate_type, aggregate_constraints} =
+        Ash.Query.Aggregate.kind_to_type(aggregate.kind, field_type, field_constraints)
+
+      Map.merge(aggregate, %{type: aggregate_type, constraints: aggregate_constraints})
+    end)
   end
 end
