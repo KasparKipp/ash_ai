@@ -1,5 +1,4 @@
 defmodule AshAi.OpenApi do
-
   @typep content_type_format() :: :json | :multipart
 
   @spec resource_write_attribute_type(
@@ -111,7 +110,6 @@ defmodule AshAi.OpenApi do
     }
     |> unwrap_any_of()
     |> with_attribute_description(attr)
-    |> OpenApiSpex.OpenApi.to_map()
   end
 
   def resource_write_attribute_type(
@@ -121,9 +119,8 @@ defmodule AshAi.OpenApi do
         format
       ) do
     if instance_of = constraints[:instance_of] do
-      if AshJsonApi.JsonSchema.embedded?(instance_of) && !constraints[:fields] do
+      if embedded?(instance_of) && !constraints[:fields] do
         embedded_type_input(attr, action_type, format)
-        |> OpenApiSpex.OpenApi.to_map()
       else
         resource_write_attribute_type(
           %{attr | type: Ash.Type.Map},
@@ -140,12 +137,8 @@ defmodule AshAi.OpenApi do
 
   def resource_write_attribute_type(%{type: type} = attr, resource, action_type, format) do
     cond do
-      AshJsonApi.JsonSchema.embedded?(type) ->
+      embedded?(type) ->
         embedded_type_input(attr, action_type)
-
-      :erlang.function_exported(type, :json_write_schema, 1) ->
-        type.json_write_schema(attr.constraints)
-        |> OpenApiSpex.OpenApi.to_map()
 
       Ash.Type.NewType.new_type?(type) ->
         new_constraints = Ash.Type.NewType.constraints(type, attr.constraints)
@@ -267,7 +260,6 @@ defmodule AshAi.OpenApi do
                 {options, nested_options ++ to_add}
 
               schema ->
-                schema = OpenApiSpex.OpenApi.to_map(schema)
                 {options, [schema | to_add]}
             end
 
@@ -284,7 +276,6 @@ defmodule AshAi.OpenApi do
         one
 
       many ->
-        many = many |> Enum.map(&OpenApiSpex.OpenApi.to_map/1)
         %{"anyOf" => many}
     end
     |> then(fn result ->
@@ -622,7 +613,7 @@ defmodule AshAi.OpenApi do
          format
        ) do
     if instance_of = constraints[:instance_of] do
-      if AshJsonApi.JsonSchema.embedded?(instance_of) && !constraints[:fields] do
+      if embedded?(instance_of) && !constraints[:fields] do
         %{
           type: :object,
           additionalProperties: false,
@@ -642,7 +633,7 @@ defmodule AshAi.OpenApi do
     constraints = attr.constraints
 
     cond do
-      AshJsonApi.JsonSchema.embedded?(type) ->
+      embedded?(type) ->
         %{
           type: :object,
           additionalProperties: false,
@@ -650,10 +641,6 @@ defmodule AshAi.OpenApi do
           required: required_attributes(type)
         }
         |> add_null_for_non_required()
-
-      function_exported?(type, :json_schema, 1) ->
-        type.json_schema(constraints)
-        |> OpenApiSpex.OpenApi.to_map()
 
       Ash.Type.NewType.new_type?(type) ->
         new_constraints = Ash.Type.NewType.constraints(type, constraints)
@@ -690,7 +677,7 @@ defmodule AshAi.OpenApi do
     |> Enum.concat(Ash.Resource.Info.public_calculations(resource))
     |> Enum.concat(
       Ash.Resource.Info.public_aggregates(resource)
-      |> AshJsonApi.JsonSchema.set_aggregate_constraints(resource)
+      |> set_aggregate_constraints(resource)
     )
     |> Enum.map(fn
       %Ash.Resource.Aggregate{} = agg ->
@@ -731,7 +718,7 @@ defmodule AshAi.OpenApi do
     end)
     |> then(fn keys ->
       if hide_pkeys? do
-        Enum.reject(keys, &AshJsonApi.Resource.only_primary_key?(resource, &1.name))
+        Enum.reject(keys, &only_primary_key?(resource, &1.name))
       else
         keys
       end
@@ -748,7 +735,7 @@ defmodule AshAi.OpenApi do
   defp required_attributes(resource) do
     resource
     |> Ash.Resource.Info.public_attributes()
-    |> Enum.reject(&(&1.allow_nil? || AshJsonApi.Resource.only_primary_key?(resource, &1.name)))
+    |> Enum.reject(&(&1.allow_nil? || only_primary_key?(resource, &1.name)))
     |> Enum.map(& &1.name)
   end
 
@@ -942,7 +929,7 @@ defmodule AshAi.OpenApi do
               {type, %{attribute_or_aggregate | type: type, constraints: []}}
           end
 
-        if AshJsonApi.JsonSchema.embedded?(type) do
+        if embedded?(type) do
           []
         else
           attribute_or_aggregate = constraints_to_item_constraints(type, attribute_or_aggregate)
@@ -1013,10 +1000,50 @@ defmodule AshAi.OpenApi do
       attribute
       | constraints: [
           items: constraints,
-          nil_items?: allow_nil? || AshJsonApi.JsonSchema.embedded?(attribute.type)
+          nil_items?: allow_nil? || embedded?(attribute.type)
         ]
     }
   end
 
   defp constraints_to_item_constraints(_, attribute_or_aggregate), do: attribute_or_aggregate
+
+  defp embedded?({:array, resource_or_type}) do
+    embedded?(resource_or_type)
+  end
+
+  defp embedded?(resource_or_type) do
+    if Ash.Resource.Info.resource?(resource_or_type) do
+      true
+    else
+      Ash.Type.embedded_type?(resource_or_type)
+    end
+  end
+
+  defp only_primary_key?(resource, field) do
+    resource
+    |> Ash.Resource.Info.primary_key()
+    |> case do
+      [^field] -> true
+      _ -> false
+    end
+  end
+
+  defp set_aggregate_constraints(aggregates, resource) do
+    Enum.map(aggregates, fn %{field: field, relationship_path: relationship_path} = aggregate ->
+      field_type_and_constraints =
+        with field when not is_nil(field) <- field,
+             related when not is_nil(related) <-
+               Ash.Resource.Info.related(resource, relationship_path),
+             attr when not is_nil(attr) <- Ash.Resource.Info.field(related, field) do
+          {attr.type, attr.constraints}
+        end
+
+      {field_type, field_constraints} = field_type_and_constraints || {nil, []}
+
+      {:ok, aggregate_type, aggregate_constraints} =
+        Ash.Query.Aggregate.kind_to_type(aggregate.kind, field_type, field_constraints)
+
+      Map.merge(aggregate, %{type: aggregate_type, constraints: aggregate_constraints})
+    end)
+  end
 end
