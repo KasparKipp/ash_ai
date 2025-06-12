@@ -111,7 +111,7 @@ defmodule AshAi.Serializer do
         end
 
       cond do
-        AshJsonApi.Resource.only_primary_key?(resource, field_name) &&
+        only_primary_key?(resource, field_name) &&
             Keyword.get(opts, :skip_only_primary_key?, true) ->
           acc
 
@@ -192,5 +192,14 @@ defmodule AshAi.Serializer do
     # if not set defaulted to AshJsonApi.Domain :include_nil_values? option
     # which defaulted to true, so leaving this true
     true
+  end
+
+  defp only_primary_key?(resource, field) do
+    resource
+    |> Ash.Resource.Info.primary_key()
+    |> case do
+      [^field] -> true
+      _ -> false
+    end
   end
 end
