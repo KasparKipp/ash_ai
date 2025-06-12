@@ -171,10 +171,9 @@ defmodule AshAi.Serializer do
   end
 
   defp default_attributes(resource) do
-    AshJsonApi.Resource.Info.default_fields(resource) ||
-      resource
-      |> Ash.Resource.Info.public_attributes()
-      |> Enum.map(& &1.name)
+    resource
+    |> Ash.Resource.Info.public_attributes()
+    |> Enum.map(& &1.name)
   end
 
   defp field_type_from_aggregate(resource, agg) do
@@ -188,13 +187,10 @@ defmodule AshAi.Serializer do
     end
   end
 
-  defp include_nil_values?(request, %resource{} = _record) do
-    # Whether we include nil values in the output depends on the include_nil_values?
-    # setting of the resource, or if it isn't set the include_nil_values? setting of
-    # the API.
-    case AshJsonApi.Resource.Info.include_nil_values?(resource) do
-      nil -> AshJsonApi.Domain.Info.include_nil_values?(request.domain)
-      val -> val
-    end
+  defp include_nil_values?(_request, %_resource{} = _record) do
+    # Before used AshJsonApi.Resource option,
+    # if not set defaulted to AshJsonApi.Domain :include_nil_values? option
+    # which defaulted to true, so leaving this true
+    true
   end
 end
