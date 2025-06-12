@@ -119,7 +119,7 @@ defmodule AshAi.OpenApi do
         format
       ) do
     if instance_of = constraints[:instance_of] do
-      if AshJsonApi.JsonSchema.embedded?(instance_of) && !constraints[:fields] do
+      if embedded?(instance_of) && !constraints[:fields] do
         embedded_type_input(attr, action_type, format)
       else
         resource_write_attribute_type(
@@ -137,7 +137,7 @@ defmodule AshAi.OpenApi do
 
   def resource_write_attribute_type(%{type: type} = attr, resource, action_type, format) do
     cond do
-      AshJsonApi.JsonSchema.embedded?(type) ->
+      embedded?(type) ->
         embedded_type_input(attr, action_type)
 
       Ash.Type.NewType.new_type?(type) ->
@@ -613,7 +613,7 @@ defmodule AshAi.OpenApi do
          format
        ) do
     if instance_of = constraints[:instance_of] do
-      if AshJsonApi.JsonSchema.embedded?(instance_of) && !constraints[:fields] do
+      if embedded?(instance_of) && !constraints[:fields] do
         %{
           type: :object,
           additionalProperties: false,
@@ -633,7 +633,7 @@ defmodule AshAi.OpenApi do
     constraints = attr.constraints
 
     cond do
-      AshJsonApi.JsonSchema.embedded?(type) ->
+      embedded?(type) ->
         %{
           type: :object,
           additionalProperties: false,
@@ -929,7 +929,7 @@ defmodule AshAi.OpenApi do
               {type, %{attribute_or_aggregate | type: type, constraints: []}}
           end
 
-        if AshJsonApi.JsonSchema.embedded?(type) do
+        if embedded?(type) do
           []
         else
           attribute_or_aggregate = constraints_to_item_constraints(type, attribute_or_aggregate)
@@ -1000,10 +1000,22 @@ defmodule AshAi.OpenApi do
       attribute
       | constraints: [
           items: constraints,
-          nil_items?: allow_nil? || AshJsonApi.JsonSchema.embedded?(attribute.type)
+          nil_items?: allow_nil? || embedded?(attribute.type)
         ]
     }
   end
 
   defp constraints_to_item_constraints(_, attribute_or_aggregate), do: attribute_or_aggregate
+
+  defp embedded?({:array, resource_or_type}) do
+    embedded?(resource_or_type)
+  end
+
+  defp embedded?(resource_or_type) do
+    if Ash.Resource.Info.resource?(resource_or_type) do
+      true
+    else
+      Ash.Type.embedded_type?(resource_or_type)
+    end
+  end
 end
