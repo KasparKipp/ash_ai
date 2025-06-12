@@ -1,5 +1,4 @@
 defmodule AshAi.OpenApi do
-
   @typep content_type_format() :: :json | :multipart
 
   @spec resource_write_attribute_type(
@@ -111,7 +110,6 @@ defmodule AshAi.OpenApi do
     }
     |> unwrap_any_of()
     |> with_attribute_description(attr)
-    |> OpenApiSpex.OpenApi.to_map()
   end
 
   def resource_write_attribute_type(
@@ -123,7 +121,6 @@ defmodule AshAi.OpenApi do
     if instance_of = constraints[:instance_of] do
       if AshJsonApi.JsonSchema.embedded?(instance_of) && !constraints[:fields] do
         embedded_type_input(attr, action_type, format)
-        |> OpenApiSpex.OpenApi.to_map()
       else
         resource_write_attribute_type(
           %{attr | type: Ash.Type.Map},
@@ -142,10 +139,6 @@ defmodule AshAi.OpenApi do
     cond do
       AshJsonApi.JsonSchema.embedded?(type) ->
         embedded_type_input(attr, action_type)
-
-      :erlang.function_exported(type, :json_write_schema, 1) ->
-        type.json_write_schema(attr.constraints)
-        |> OpenApiSpex.OpenApi.to_map()
 
       Ash.Type.NewType.new_type?(type) ->
         new_constraints = Ash.Type.NewType.constraints(type, attr.constraints)
@@ -267,7 +260,6 @@ defmodule AshAi.OpenApi do
                 {options, nested_options ++ to_add}
 
               schema ->
-                schema = OpenApiSpex.OpenApi.to_map(schema)
                 {options, [schema | to_add]}
             end
 
@@ -284,7 +276,6 @@ defmodule AshAi.OpenApi do
         one
 
       many ->
-        many = many |> Enum.map(&OpenApiSpex.OpenApi.to_map/1)
         %{"anyOf" => many}
     end
     |> then(fn result ->
@@ -650,10 +641,6 @@ defmodule AshAi.OpenApi do
           required: required_attributes(type)
         }
         |> add_null_for_non_required()
-
-      function_exported?(type, :json_schema, 1) ->
-        type.json_schema(constraints)
-        |> OpenApiSpex.OpenApi.to_map()
 
       Ash.Type.NewType.new_type?(type) ->
         new_constraints = Ash.Type.NewType.constraints(type, constraints)
