@@ -718,7 +718,7 @@ defmodule AshAi.OpenApi do
     end)
     |> then(fn keys ->
       if hide_pkeys? do
-        Enum.reject(keys, &AshJsonApi.Resource.only_primary_key?(resource, &1.name))
+        Enum.reject(keys, &only_primary_key?(resource, &1.name))
       else
         keys
       end
@@ -735,7 +735,7 @@ defmodule AshAi.OpenApi do
   defp required_attributes(resource) do
     resource
     |> Ash.Resource.Info.public_attributes()
-    |> Enum.reject(&(&1.allow_nil? || AshJsonApi.Resource.only_primary_key?(resource, &1.name)))
+    |> Enum.reject(&(&1.allow_nil? || only_primary_key?(resource, &1.name)))
     |> Enum.map(& &1.name)
   end
 
@@ -1016,6 +1016,15 @@ defmodule AshAi.OpenApi do
       true
     else
       Ash.Type.embedded_type?(resource_or_type)
+    end
+  end
+
+  defp only_primary_key?(resource, field) do
+    resource
+    |> Ash.Resource.Info.primary_key()
+    |> case do
+      [^field] -> true
+      _ -> false
     end
   end
 end
